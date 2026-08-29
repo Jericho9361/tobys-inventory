@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function myProfile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    function isAdmin() {
+      return isSignedIn() && myProfile().role == 'admin';
+    }
+    function myBranchId() {
+      return myProfile().branchId;
+    }
+
+    // Each user's own profile: {email, role, branchId}
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      // Only an admin can create/update accounts (role, branch assignment).
+      // A brand-new signup creates its OWN doc once (handled client-side right
+      // after createUserWithEmailAndPassword), so also allow a user to create
+      // their own doc the first time.
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Branch metadata: {name, metaDate, metaAssistant, metaHead, createdAt, createdBy}
+    match /branches/{branchId} {
+      allow read: if isSignedIn() && (isAdmin() || myBranchId() == branchId);
+      allow write: if isSignedIn() && (isAdmin() || myBranchId() == branchId);
+      allow create: if isAdmin();
+
+      // Sub-collections: itemList, ile, physicalCount, bom
+      match /{collection}/{docId} {
+        allow read, write: if isSignedIn() && (isAdmin() || myBranchId() == branchId);
+      }
+    }
+
+    // Global activity feed — anyone signed in can add an entry (when they make
+    // a change), but only admin can read the feed back.
+    match /activityLog/{entryId} {
+      allow create: if isSignedIn();
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+  }
+}
